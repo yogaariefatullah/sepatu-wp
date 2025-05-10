@@ -3,63 +3,111 @@ include 'headerhome.php';
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
+// Pastikan session sudah dimulai
+
 // Ambil pilihan warna dari database
 $warna_query = $koneksi->query("SELECT DISTINCT warna FROM sepatu ORDER BY warna ASC");
-
+$harga_query = $koneksi->query("SELECT DISTINCT harga FROM sepatu ORDER BY harga ASC");
+$harga_list = [];
+while ($row = $harga_query->fetch_assoc()) {
+    $harga_list[] = $row['harga'];
+}
 // Proses saat form dikirim
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["search"])) {
-    // Ambil data preferensi dari form
     $gender = $_POST["gender"];
     $olahraga = $_POST["olahraga"];
     $warna = $_POST["warna"];
     $kelenturan = $_POST["kelenturan"];
     $tebal_sol = $_POST["tebal_sol"];
+    $harga_min = $_POST["harga_min"];
+    $harga_max = $_POST["harga_max"];
 
-    // Query sepatu yang cocok dengan preferensi
-    $query = $koneksi->query("SELECT * FROM sepatu WHERE gender = '$gender' AND jenis_olahraga LIKE '%$olahraga%' AND warna LIKE '%$warna%' AND kelenturan LIKE '%$kelenturan%' AND tebal_sol LIKE '%$tebal_sol%'");
+    // Filter sepatu berdasarkan preferensi
+    // Konversi harga ke float
+    $harga_min_new = floatval($harga_min);
+    $harga_max_new = floatval($harga_max);
 
-    if ($query->num_rows > 0) {
+    // Escape string untuk keamanan
+    $gender = $koneksi->real_escape_string($gender);
+    $olahraga = $koneksi->real_escape_string($olahraga);
+    $warna = $koneksi->real_escape_string($warna);
+    $kelenturan = $koneksi->real_escape_string($kelenturan);
+    $tebal_sol = $koneksi->real_escape_string($tebal_sol);
+
+    // Susun query
+    $sql = "
+        SELECT * FROM sepatu 
+        WHERE gender = '$gender' 
+        AND jenis_olahraga LIKE '%$olahraga%' 
+        AND warna LIKE '%$warna%' 
+        AND kelenturan LIKE '%$kelenturan%' 
+        AND tebal_sol LIKE '%$tebal_sol%' 
+        AND harga BETWEEN $harga_min_new AND $harga_max_new
+    ";
+
+    // Eksekusi query
+    $result = $koneksi->query($sql);
+
+    if ($result->num_rows > 0) {
         $results = [];
 
-        while ($row = $query->fetch_assoc()) {
-            $skor_wp = 1;
-            $id_sepatu = $row['id_sepatu'];
+        // Ambil semua bobot dan tipe kriteria
+        $kriteria_result = $koneksi->query("SELECT * FROM kriteria");
+        $kriteria_data = [];
+        $total_bobot = 0;
 
-            // Ambil bobot kriteria untuk sepatu ini
-            $bobot_query = $koneksi->query("SELECT * FROM bobot_kriteria WHERE id_sepatu = '$id_sepatu'");
-            $bobot_data = [];
-            while ($bobot_row = $bobot_query->fetch_assoc()) {
-                $bobot_data[$bobot_row['kd_kriteria']] = $bobot_row['bobot'];
-            }
-
-            // Preferensi pengguna
-            $kriteria = [
-                'gender' => $gender,
-                'jenis_olahraga' => $olahraga,
-                'warna' => $warna,
-                'kelenturan' => $kelenturan,
-                'tebal_sol' => $tebal_sol
+        while ($kr = $kriteria_result->fetch_assoc()) {
+            $kriteria_data[$kr['kd_kriteria']] = [
+                'bobot' => 1, // default jika tidak ada bobot disimpan
+                'sifat' => $kr['sifat']
             ];
+            $total_bobot += 1;
+        }
 
+        // Normalisasi bobot
+        foreach ($kriteria_data as $kd => &$val) {
+            $val['bobot'] = $val['bobot'] / $total_bobot;
+        }
+
+        // Loop setiap sepatu untuk hitung skor WP
+        while ($row = $result->fetch_assoc()) {
+            $id_sepatu = $row['id_sepatu'];
+            $skor_wp = 1;
             $penjelasan = [];
 
-            // Hitung skor WP
-            foreach ($kriteria as $kriteria_name => $preferensi_value) {
-                $nilai_sepatu = $row[$kriteria_name];
-                $bobot = isset($bobot_data[$kriteria_name]) ? $bobot_data[$kriteria_name] : 1;
+            // Ambil nilai untuk setiap sepatu
+            $nilai_query = $koneksi->prepare("SELECT * FROM nilai_wp WHERE id_sepatu = ?");
+            $nilai_query->bind_param("i", $id_sepatu);
+            $nilai_query->execute();
+            $nilai_result = $nilai_query->get_result();
 
-                if ($nilai_sepatu == $preferensi_value) {
-                    $nilai_kecocokan = 1;
-                    $keterangan = "Cocok (nilai 1)";
-                } else {
-                    $nilai_kecocokan = 0.75;
-                    $keterangan = "Kurang cocok (nilai 0.75)";
-                }
+            $nilai_kriteria = [];
+            while ($n = $nilai_result->fetch_assoc()) {
+                $nilai_kriteria[$n['kd_kriteria']] = $n['nilai'];
+            }
 
-                $kontribusi = pow($nilai_kecocokan, $bobot);
+            // Hitung kontribusi harga pada skor WP
+            $nilai_harga = $row['harga'];
+            $harga_bobot = 1; // Misalnya bobotnya 1, bisa disesuaikan
+            $sifat_harga = 'min'; // Jika harga lebih rendah lebih baik
+            $bobot_terapan_harga = ($sifat_harga == 'min') ? -$harga_bobot : $harga_bobot;
+            $kontribusi_harga = pow($nilai_harga, $bobot_terapan_harga);
+            $skor_wp *= $kontribusi_harga;
+
+            $penjelasan[] = "Harga: Nilai = $nilai_harga, Bobot = $harga_bobot, Sifat = $sifat_harga, Kontribusi Harga = " . round($kontribusi_harga, 4);
+
+            // Hitung kontribusi setiap kriteria lainnya
+            foreach ($kriteria_data as $kd_kriteria => $kriteria_info) {
+                $nilai = isset($nilai_kriteria[$kd_kriteria]) ? $nilai_kriteria[$kd_kriteria] : 1;
+                $bobot = $kriteria_info['bobot'];
+                $sifat = $kriteria_info['sifat'];
+
+                // Penyesuaian min/max
+                $bobot_terapan = ($sifat == 'min') ? -$bobot : $bobot;
+                $kontribusi = pow($nilai, $bobot_terapan);
                 $skor_wp *= $kontribusi;
 
-                $penjelasan[] = ucfirst($kriteria_name) . " = " . $nilai_sepatu . ", preferensi: " . $preferensi_value . ", bobot: " . $bobot . ", $keterangan, kontribusi: " . round($kontribusi, 4);
+                $penjelasan[] = "Kriteria $kd_kriteria: Nilai = $nilai, Bobot = $bobot, Sifat = $sifat, Kontribusi = " . round($kontribusi, 4);
             }
 
             $row['skor_wp'] = $skor_wp;
@@ -67,34 +115,35 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["search"])) {
             $results[] = $row;
         }
 
-        // Urutkan berdasarkan skor WP tertinggi
+        // Normalisasi skor WP menjadi persentase
         usort($results, function ($a, $b) {
             return $b['skor_wp'] <=> $a['skor_wp'];
         });
+        $total_skor = array_sum(array_column($results, 'skor_wp'));
 
-        // Hitung total skor WP
-        $total_skor_wp = array_sum(array_column($results, 'skor_wp'));
-
-        // Hitung persentase WP
         foreach ($results as &$sepatu) {
-            $sepatu['persentase_wp'] = ($sepatu['skor_wp'] / $total_skor_wp) * 100;
+            $sepatu['persentase_wp'] = ($sepatu['skor_wp'] / $total_skor) * 100;
         }
-        unset($sepatu);
-        $idakun = $_SESSION['akun']['idakun'];
-        
-        if (isset($idakun)) {
 
-            
+        // Simpan jika user login
+        if (isset($_SESSION['akun']['idakun'])) {
+            $idakun = intval($_SESSION['akun']['idakun']); // pastikan id_user berupa integer
+
             foreach ($results as $sepatu) {
-                $id_sepatu = $sepatu['id_sepatu'];
-                $skor_wp = $sepatu['skor_wp'];
-                $persentase_wp = $sepatu['persentase_wp'];
-                $preferensi_json = json_encode($kriteria);
-                $penjelasan_json = json_encode($sepatu['penjelasan_wp']);
+                $id_sepatu = intval($sepatu['id_sepatu']); // pastikan id_sepatu juga integer
+                $skor_wp = floatval($sepatu['skor_wp']);
+                $persentase_wp = floatval($sepatu['persentase_wp']);
+                $pref = $koneksi->real_escape_string(json_encode($_POST));
+                $penj = $koneksi->real_escape_string(json_encode($sepatu['penjelasan_wp']));
 
-                $stmt = $koneksi->prepare("INSERT INTO hasil_rekomendasi (id_user, id_sepatu, skor_wp, persentase_wp, preferensi_json, penjelasan_json) VALUES (?, ?, ?, ?, ?, ?)");
-                $stmt->bind_param("iiddss", $idakun, $id_sepatu, $skor_wp, $persentase_wp, $preferensi_json, $penjelasan_json);
-                $stmt->execute();
+                $sql = "
+                    INSERT INTO hasil_rekomendasi 
+                    (id_user, id_sepatu, skor_wp, persentase_wp, preferensi_json, penjelasan_json) 
+                    VALUES 
+                    ($idakun, $id_sepatu, $skor_wp, $persentase_wp, '$pref', '$penj')
+                ";
+
+                $koneksi->query($sql);
             }
         }
     } else {
@@ -166,52 +215,99 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["search"])) {
                                 <select class="form-control" name="tebal_sol" id="tebal_sol" required>
                                     <option value="">Pilih Tebal Sol</option>
                                     <option value="Tipis">Tipis</option>
-                                    <option value="Sedang">Sedang</option>
                                     <option value="Tebal">Tebal</option>
                                 </select>
                             </div>
+                            <div class="form-group">
+                                <label for="harga_min">Harga Min</label>
+                                <select class="form-control" name="harga_min" id="harga_min" required>
+                                    <option value="">Pilih Harga Minimum</option>
+                                    <?php foreach ($harga_list as $harga) : ?>
+                                        <option value="<?= $harga ?>" <?= (isset($_POST['harga_min']) && $_POST['harga_min'] == $harga) ? 'selected' : '' ?>>
+                                            Rp <?= number_format($harga, 0, ',', '.') ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
 
-                            <button type="submit" name="search" class="btn btn-info btn-block">Cari Sepatu Terbaik</button>
+                            <div class="form-group">
+                                <label for="harga_max">Harga Max</label>
+                                <select class="form-control" name="harga_max" id="harga_max" required>
+                                    <option value="">Pilih Harga Maksimum</option>
+                                    <?php foreach ($harga_list as $harga) : ?>
+                                        <option value="<?= $harga ?>" <?= (isset($_POST['harga_max']) && $_POST['harga_max'] == $harga) ? 'selected' : '' ?>>
+                                            Rp <?= number_format($harga, 0, ',', '.') ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+
+
+                            <button type="submit" class="btn btn-primary" name="search">Cari Sepatu</button>
                         </form>
                     </div>
                 </div>
-
-                <!-- Tampilkan hasil -->
-                <?php if (isset($results) && count($results) > 0) : ?>
-                    <div class="card mt-4">
-                        <div class="card-body">
-                            <h4>Rekomendasi Sepatu Terbaik</h4>
-                            <div class="row">
-                                <?php foreach ($results as $sepatu) : ?>
-                                    <div class="col-md-4">
-                                        <div class="card">
-                                            <img src="foto/<?= $sepatu['gambar'] ?>" class="card-img-top" alt="Gambar Sepatu">
-                                            <div class="card-body">
-                                                <h5 class="card-title"><?= $sepatu['nama_sepatu'] ?></h5>
-                                                <p class="card-text">Jenis Olahraga: <?= $sepatu['jenis_olahraga'] ?></p>
-                                                <p class="card-text">Warna: <?= $sepatu['warna'] ?></p>
-                                                <p class="card-text">Kelenturan: <?= $sepatu['kelenturan'] ?></p>
-                                                <p class="card-text">Tebal Sol: <?= $sepatu['tebal_sol'] ?></p>
-                                                <p class="card-text"><strong>Skor WP:</strong> <?= round($sepatu['persentase_wp'], 2) ?>%</p>
-                                                <p class="card-text"><strong>Penjelasan Skor WP:</strong></p>
-                                                <ul>
-                                                    <?php foreach ($sepatu['penjelasan_wp'] as $penj) : ?>
-                                                        <li><?= htmlspecialchars($penj) ?></li>
-                                                    <?php endforeach; ?>
-                                                </ul>
-                                            </div>
-                                        </div>
-                                    </div>
-                                <?php endforeach; ?>
-                            </div>
-                        </div>
-                    </div>
-                <?php elseif (isset($error_msg)) : ?>
-                    <div class="alert alert-danger mt-4"><?= $error_msg ?></div>
-                <?php endif; ?>
             </div>
         </div>
     </div>
 </div>
 
-<?php include 'footerhome.php'; ?>
+<!-- Display results -->
+<?php if (isset($results)) : ?>
+    <div class="container mt-5">
+        <h3>Hasil Rekomendasi Sepatu</h3>
+        <div class="row">
+            <?php foreach ($results as $sepatu) : ?>
+                <div class="col-md-4">
+                    <div class="card mb-4">
+                        <img src="foto/<?= htmlspecialchars($sepatu['gambar']) ?>" class="card-img-top" alt="Gambar Sepatu">
+                        <div class="card-body">
+                            <h5 class="card-title"><?= htmlspecialchars($sepatu['nama_sepatu']) ?></h5>
+                            <p class="card-text">Persentase WP: <?= round($sepatu['persentase_wp'], 2) ?>%</p>
+
+                            <?php if (!empty($penjelasan)) : ?>
+                                <div class="mt-2">
+                                    <strong>Penjelasan:</strong>
+                                    <ul class="mb-0">
+                                        <?php foreach ($penjelasan as $key => $value) : ?>
+                                            <li><strong><?= htmlspecialchars($key) ?>:</strong> <?= htmlspecialchars($value) ?></li>
+                                        <?php endforeach; ?>
+
+                                        <?php if (isset($sepatu['persentase_wp'])) : ?>
+                                            <?php
+                                                            $persentase = round($sepatu['persentase_wp'], 2);
+
+                                                            // Cek jika skor WP adalah 100%
+                                                            if ($persentase == 100.00) : ?>
+                                                <li class="text-success"><strong>Kesimpulan:</strong> Semua kriteria cocok 100%, sehingga sepatu ini sangat sesuai dengan preferensi Anda.</li>
+                                            <?php
+                                                            // Jika persentase WP lebih dari 80%, tetapi kurang dari 100%
+                                                            elseif ($persentase >= 80) : ?>
+                                                <li class="text-warning"><strong>Kesimpulan:</strong> Sebagian besar kriteria cocok dengan preferensi Anda (<?= $persentase ?>%). Sepatu ini sangat layak dipertimbangkan.</li>
+                                            <?php
+                                                            // Jika persentase WP lebih dari 50%, tetapi kurang dari 80%
+                                                            elseif ($persentase >= 50) : ?>
+                                                <li class="text-info"><strong>Kesimpulan:</strong> Beberapa kriteria cocok (<?= $persentase ?>%). Sepatu ini cukup sesuai dengan preferensi Anda, tetapi masih ada beberapa yang perlu dipertimbangkan.</li>
+                                            <?php
+                                                            // Jika persentase WP kurang dari 50%
+                                                            else : ?>
+                                                <li class="text-danger"><strong>Kesimpulan:</strong> Sebagian besar kriteria tidak cocok (<?= $persentase ?>%). Sepatu ini kurang sesuai dengan preferensi Anda.</li>
+                                            <?php endif; ?>
+                                        <?php endif; ?>
+
+                                    </ul>
+                                </div>
+                            <?php endif; ?>
+
+                        </div>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+        </div>
+    </div>
+<?php endif; ?>
+
+
+<?php
+include 'footerhome.php';
+?>

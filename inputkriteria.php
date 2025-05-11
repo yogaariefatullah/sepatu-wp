@@ -184,10 +184,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["search"])) {
                                 <label for="olahraga">Jenis Olahraga</label>
                                 <select class="form-control" name="olahraga" id="olahraga" required>
                                     <option value="">Pilih Jenis Olahraga</option>
-                                    <option value="Lari">Lari</option>
-                                    <option value="Tenis">Tenis</option>
-                                    <option value="Basket">Basket</option>
-                                    <option value="Sepak Bola">Sepak Bola</option>
+                                    <option value="Running">Running</option>
+                                    <option value="Tennis dan Padel">Tenis</option>
+                                    <option value="Fitness">Basket</option>
                                 </select>
                             </div>
 

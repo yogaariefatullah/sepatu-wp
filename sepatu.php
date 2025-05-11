@@ -96,7 +96,7 @@ if (isset($_GET['action']) && $_GET['action'] == 'delete') {
                                         <option value="Fitness" <?= ($update && $row['jenis_olahraga'] == 'Fitness') ? 'selected' : '' ?>>Fitness</option>
                                     </select>
                                 </div>
-                         
+
 
                                 <div class="form-group">
                                     <label for="gender">Gender</label>
@@ -108,7 +108,12 @@ if (isset($_GET['action']) && $_GET['action'] == 'delete') {
 
                                 <div class="form-group">
                                     <label for="warna">Warna</label>
-                                    <input type="text" name="warna" class="form-control" value="<?= $update ? $row['warna'] : '' ?>" required>
+                                    <select name="warna" class="form-control" required>
+                                        <option value="">-- Pilih Warna --</option>
+                                        <option value="Gelap" <?= $update && $row['warna'] == 'Gelap' ? 'selected' : '' ?>>Gelap</option>
+                                        <option value="Terang" <?= $update && $row['warna'] == 'Terang' ? 'selected' : '' ?>>Terang</option>
+                                    </select>
+
                                 </div>
 
                                 <div class="form-group">
@@ -167,7 +172,7 @@ if (isset($_GET['action']) && $_GET['action'] == 'delete') {
                                     <?php
                                     $query = $connection->query("SELECT * FROM sepatu");
                                     while ($row = $query->fetch_assoc()) :
-                                    ?>
+                                        ?>
                                         <tr>
                                             <td><?= $no++ ?></td>
                                             <td><?= $row['nama_sepatu'] ?></td>
@@ -176,7 +181,7 @@ if (isset($_GET['action']) && $_GET['action'] == 'delete') {
                                             <td>
                                                 <?php if ($row['gambar']) : ?>
                                                     <img src="foto/<?= $row['gambar'] ?>" width="100" height="auto">
-                                                <?php else: ?>
+                                                <?php else : ?>
                                                     <span>No Image</span>
                                                 <?php endif; ?>
                                             </td>

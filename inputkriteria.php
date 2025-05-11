@@ -186,7 +186,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["search"])) {
                                     <option value="">Pilih Jenis Olahraga</option>
                                     <option value="Running">Running</option>
                                     <option value="Tennis dan Padel">Tenis</option>
-                                    <option value="Fitness">Basket</option>
+                                    <option value="Fitness">Fitness</option>
                                 </select>
                             </div>
 
